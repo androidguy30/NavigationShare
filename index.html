@@ -126,11 +126,53 @@
       transform: none;
     }
 
-    .wa-hint {
-      font-size: 0.78rem;
-      color: #888;
+    .wa-steps {
+      background: #f0faf4;
+      border: 1px solid #b7ebc9;
+      border-radius: 10px;
+      padding: 12px 16px;
       margin-top: -4px;
+      text-align: left;
       display: none;
+    }
+
+    .wa-steps p {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #1a7d3f;
+      margin-bottom: 6px;
+    }
+
+    .wa-steps ol {
+      font-size: 0.78rem;
+      color: #555;
+      padding-left: 18px;
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    .wa-steps ol strong { color: #1a7d3f; }
+
+    .desktop-note {
+      background: #fff3e0;
+      border: 1px solid #ffe0b2;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 12px;
+      text-align: left;
+      display: none;
+    }
+
+    .desktop-note p {
+      font-size: 0.82rem;
+      color: #e65100;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .desktop-note span {
+      font-size: 0.78rem;
+      color: #666;
     }
 
     .status {
@@ -165,8 +207,6 @@
     }
 
     .fallback-links a:hover { opacity: 0.85; }
-    .fallback-links .twitter { background: #1da1f2; }
-    .fallback-links .whatsapp { background: #25d366; }
     .fallback-links .download { background: #6c757d; }
   </style>
 </head>
@@ -195,65 +235,79 @@
         </svg>
         Share to WhatsApp Status
       </button>
-      <p class="wa-hint" id="waHint">Tip: Select "My Status" in WhatsApp to post as a Status update</p>
+
+      <div class="wa-steps" id="waSteps">
+        <p>How to post as WhatsApp Status:</p>
+        <ol>
+          <li>Tap <strong>WhatsApp</strong> in the share sheet</li>
+          <li>Select <strong>"My Status"</strong> (not a contact)</li>
+          <li>Tap the <strong>send</strong> button</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="desktop-note" id="desktopNote">
+      <p>WhatsApp Status requires the mobile app</p>
+      <span>Download the image below, then open WhatsApp on your phone and post it as a Status from there.</span>
     </div>
 
     <div class="status" id="status"></div>
     <div class="fallback-links" id="fallback" style="display:none">
-      <a class="download" id="downloadLink" download="shared-image.jpg">Download</a>
+      <a class="download" id="downloadLink" download="shared-image.jpg">Download Image</a>
     </div>
   </div>
 
   <script>
-    const IMAGE_URL = 'https://picsum.photos/seed/share-demo/400/300';
+    // Image source — fetched through /api/image proxy to avoid CORS issues.
+    const UPSTREAM_URL = 'https://picsum.photos/seed/share-demo/400/300';
+    const PROXY_URL = '/api/image?url=' + encodeURIComponent(UPSTREAM_URL);
 
     const img = document.getElementById('preview');
     const btn = document.getElementById('shareBtn');
     const waBtn = document.getElementById('whatsappBtn');
-    const waHint = document.getElementById('waHint');
+    const waSteps = document.getElementById('waSteps');
+    const desktopNote = document.getElementById('desktopNote');
     const statusEl = document.getElementById('status');
     const spinner = document.getElementById('spinner');
     const fallbackEl = document.getElementById('fallback');
     const downloadLink = document.getElementById('downloadLink');
 
     let imageFile = null;
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-    // Fetch the image as a real blob — avoids canvas CORS tainting entirely.
+    // ── Load image via same-origin proxy (CORS-safe) ──
     async function loadImage() {
       try {
-        const resp = await fetch(IMAGE_URL);
+        // Try proxy first (works on Vercel), fall back to direct URL (local dev)
+        let resp = await fetch(PROXY_URL);
+        if (!resp.ok) {
+          resp = await fetch(UPSTREAM_URL);
+        }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
         const blob = await resp.blob();
+        const type = blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
 
-        // Ensure we have a proper JPEG File object (not an opaque blob)
-        const jpegBlob = blob.type.startsWith('image/')
-          ? blob
-          : new Blob([blob], { type: 'image/jpeg' });
-
-        imageFile = new File([jpegBlob], 'shared-image.jpg', {
-          type: jpegBlob.type,
+        imageFile = new File([blob], 'shared-image.jpg', {
+          type,
           lastModified: Date.now(),
         });
 
-        // Show preview from the object URL (no CORS needed)
-        const objectUrl = URL.createObjectURL(jpegBlob);
+        const objectUrl = URL.createObjectURL(blob);
         img.src = objectUrl;
+        downloadLink.href = objectUrl;
+
         img.onload = () => {
           spinner.style.display = 'none';
           img.style.display = 'block';
+          btn.disabled = false;
+          waBtn.disabled = false;
+          setStatus('Image loaded — ready to share!', 'success');
         };
-
-        // Set up download fallback
-        downloadLink.href = objectUrl;
-
-        btn.disabled = false;
-        waBtn.disabled = false;
-        setStatus('Image loaded — ready to share!', 'success');
       } catch (err) {
         spinner.style.display = 'none';
         setStatus('Failed to load image: ' + err.message, 'error');
-        fallbackEl.style.display = 'flex';
+        showFallback();
       }
     }
 
@@ -267,14 +321,12 @@
         try {
           await navigator.share({
             title: 'Check out this image!',
-            text: 'Shared via Web Share API Demo',
+            text: 'Shared via Web Share API',
             files: [imageFile],
           });
           setStatus('Shared successfully!', 'success');
         } catch (err) {
-          if (err.name === 'AbortError') {
-            setStatus('Share cancelled.', '');
-          } else {
+          if (err.name !== 'AbortError') {
             setStatus('Share failed: ' + err.message, 'error');
             showFallback();
           }
@@ -283,7 +335,7 @@
         try {
           await navigator.share({
             title: 'Check out this image!',
-            text: 'Shared via Web Share API Demo',
+            text: 'Shared via Web Share API',
             url: window.location.href,
           });
           setStatus('Shared link (file sharing not supported).', 'success');
@@ -300,76 +352,45 @@
     });
 
     // ── WhatsApp Status share ──
-    // Strategy:
-    //   1. navigator.share({ files }) — opens the OS share sheet; user picks
-    //      WhatsApp and can select "My Status" to post the image as a Status.
-    //      This is the ONLY reliable way to share an image to WA Status from
-    //      the web — WhatsApp has no direct deep-link for Status-with-image.
-    //   2. Fallback (desktop / unsupported): open whatsapp:// deep-link which
-    //      at least launches the app, and show instructions.
+    //
+    // Platform reality: WhatsApp has NO public web API, deep link, or URL
+    // scheme that accepts an image for Status posting. The only working path
+    // from a web page is:
+    //
+    //   navigator.share({ files: [imageFile] })
+    //     → user taps WhatsApp in the OS share sheet
+    //       → user selects "My Status"
+    //
+    // This works on Android Chrome 93+ and iOS Safari 15+.
+    // On desktop browsers, navigator.share with files is unsupported, so we
+    // show a download button + instructions.
+
     waBtn.addEventListener('click', async () => {
       if (!imageFile) return;
 
-      if (navigator.canShare && navigator.canShare({ files: [imageFile] })) {
-        waHint.style.display = 'block';
+      // Mobile: use Web Share API with the image file
+      if (isMobile && navigator.canShare && navigator.canShare({ files: [imageFile] })) {
+        waSteps.style.display = 'block';
         try {
-          await navigator.share({
-            files: [imageFile],
-          });
-          setStatus('Image shared — check WhatsApp Status!', 'success');
-          waHint.style.display = 'none';
+          await navigator.share({ files: [imageFile] });
+          setStatus('Image sent to WhatsApp — post it as your Status!', 'success');
         } catch (err) {
-          waHint.style.display = 'none';
           if (err.name === 'AbortError') {
             setStatus('Share cancelled.', '');
           } else {
-            setStatus('Share sheet failed — opening WhatsApp...', 'error');
-            openWhatsAppDeepLink();
+            setStatus('Share sheet failed: ' + err.message, 'error');
+            showFallback();
           }
         }
-      } else {
-        // No file-share support — try deep link
-        openWhatsAppDeepLink();
-      }
-    });
-
-    function openWhatsAppDeepLink() {
-      // Try the whatsapp:// scheme first (works on mobile if WA is installed).
-      // Falls back to web.whatsapp.com with a text prompt.
-      const text = encodeURIComponent(
-        'Check out this image!\n' + window.location.href
-      );
-
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-      if (isMobile) {
-        // On Android, intent:// can launch WhatsApp directly
-        const isAndroid = /Android/i.test(navigator.userAgent);
-        if (isAndroid) {
-          // Android intent to send image via WhatsApp
-          // Since we can't pass blob via intent from browser, open WA with text
-          window.location.href =
-            'intent://send?text=' + text +
-            '#Intent;scheme=whatsapp;package=com.whatsapp;end';
-        } else {
-          // iOS — whatsapp:// scheme
-          window.location.href = 'whatsapp://send?text=' + text;
-        }
-        setStatus(
-          'WhatsApp opened — to post as Status: save the image above (long-press), then add it from WhatsApp Status.',
-          'success'
-        );
-      } else {
-        // Desktop fallback
-        window.open('https://web.whatsapp.com/', '_blank');
-        setStatus(
-          'WhatsApp Web opened — save the image (right-click > Save), then post as Status from your phone.',
-          'success'
-        );
+        waSteps.style.display = 'none';
+        return;
       }
 
+      // Desktop / unsupported: show download + instructions
+      desktopNote.style.display = 'block';
       showFallback();
-    }
+      setStatus('Download the image and post it as a WhatsApp Status from your phone.', '');
+    });
 
     function showFallback() {
       fallbackEl.style.display = 'flex';

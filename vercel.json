@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/image", "destination": "/api/image" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
