@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Share</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f0f2f5;
+      padding: 20px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+      padding: 32px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      color: #1a1a2e;
+      margin-bottom: 8px;
+    }
+
+    p.subtitle {
+      color: #666;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+
+    .image-container {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 24px;
+      background: #e9ecef;
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .image-container img {
+      width: 100%;
+      display: block;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #ddd;
+      border-top-color: #4361ee;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      position: absolute;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .share-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #4361ee;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 32px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .share-btn:hover { background: #3a56d4; }
+    .share-btn:active { transform: scale(0.98); }
+    .share-btn:disabled {
+      background: #adb5bd;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status {
+      margin-top: 16px;
+      font-size: 0.85rem;
+      color: #666;
+      min-height: 1.2em;
+    }
+
+    .status.error { color: #e63946; }
+    .status.success { color: #2d6a4f; }
+
+    .fallback-links {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .fallback-links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 20px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #fff;
+      transition: opacity 0.2s;
+    }
+
+    .fallback-links a:hover { opacity: 0.85; }
+    .fallback-links .twitter { background: #1da1f2; }
+    .fallback-links .whatsapp { background: #25d366; }
+    .fallback-links .download { background: #6c757d; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Web Share API Demo</h1>
+    <p class="subtitle">Share an image using the native share dialog</p>
+
+    <div class="image-container">
+      <div class="spinner" id="spinner"></div>
+      <img
+        id="preview"
+        src="https://picsum.photos/seed/share-demo/400/300"
+        alt="Random demo image"
+        crossorigin="anonymous"
+        style="display:none"
+      >
+    </div>
+
+    <button class="share-btn" id="shareBtn" disabled>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+      </svg>
+      Share Image
+    </button>
+
+    <div class="status" id="status"></div>
+    <div class="fallback-links" id="fallback" style="display:none">
+      <a class="download" id="downloadLink" download="shared-image.jpg">Download</a>
+    </div>
+  </div>
+
+  <script>
+    const img = document.getElementById('preview');
+    const btn = document.getElementById('shareBtn');
+    const status = document.getElementById('status');
+    const spinner = document.getElementById('spinner');
+    const fallback = document.getElementById('fallback');
+    const downloadLink = document.getElementById('downloadLink');
+
+    let imageFile = null;
+
+    img.addEventListener('load', async () => {
+      spinner.style.display = 'none';
+      img.style.display = 'block';
+
+      try {
+        // Draw to canvas to get a blob (avoids CORS issues with direct fetch)
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+
+        const blob = await new Promise(resolve =>
+          canvas.toBlob(resolve, 'image/jpeg', 0.92)
+        );
+
+        imageFile = new File([blob], 'shared-image.jpg', { type: 'image/jpeg' });
+
+        // Set up download fallback
+        downloadLink.href = URL.createObjectURL(blob);
+
+        btn.disabled = false;
+        setStatus('Image loaded — ready to share!', 'success');
+      } catch (err) {
+        setStatus('Image loaded but canvas tainted — download only.', 'error');
+        fallback.style.display = 'flex';
+      }
+    });
+
+    img.addEventListener('error', () => {
+      spinner.style.display = 'none';
+      setStatus('Failed to load image.', 'error');
+    });
+
+    btn.addEventListener('click', async () => {
+      if (!imageFile) return;
+
+      // Check if Web Share API with files is supported
+      if (navigator.canShare && navigator.canShare({ files: [imageFile] })) {
+        try {
+          await navigator.share({
+            title: 'Check out this image!',
+            text: 'Shared via Web Share API Demo',
+            files: [imageFile],
+          });
+          setStatus('Shared successfully!', 'success');
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            setStatus('Share cancelled.', '');
+          } else {
+            setStatus('Share failed: ' + err.message, 'error');
+            showFallback();
+          }
+        }
+      } else if (navigator.share) {
+        // Fallback: share without file (link only)
+        try {
+          await navigator.share({
+            title: 'Check out this image!',
+            text: 'Shared via Web Share API Demo',
+            url: window.location.href,
+          });
+          setStatus('Shared link (file sharing not supported).', 'success');
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            setStatus('Share failed.', 'error');
+            showFallback();
+          }
+        }
+      } else {
+        setStatus('Web Share API not supported on this browser.', 'error');
+        showFallback();
+      }
+    });
+
+    function showFallback() {
+      fallback.style.display = 'flex';
+    }
+
+    function setStatus(msg, type) {
+      status.textContent = msg;
+      status.className = 'status' + (type ? ' ' + type : '');
+    }
+  </script>
+</body>
+</html>
