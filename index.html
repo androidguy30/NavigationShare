@@ -126,6 +126,13 @@
       transform: none;
     }
 
+    .wa-hint {
+      font-size: 0.78rem;
+      color: #888;
+      margin-top: -4px;
+      display: none;
+    }
+
     .status {
       margin-top: 16px;
       font-size: 0.85rem;
@@ -170,13 +177,7 @@
 
     <div class="image-container">
       <div class="spinner" id="spinner"></div>
-      <img
-        id="preview"
-        src="https://picsum.photos/seed/share-demo/400/300"
-        alt="Random demo image"
-        crossorigin="anonymous"
-        style="display:none"
-      >
+      <img id="preview" alt="Random demo image" style="display:none">
     </div>
 
     <div class="btn-group">
@@ -194,6 +195,7 @@
         </svg>
         Share to WhatsApp Status
       </button>
+      <p class="wa-hint" id="waHint">Tip: Select "My Status" in WhatsApp to post as a Status update</p>
     </div>
 
     <div class="status" id="status"></div>
@@ -203,56 +205,64 @@
   </div>
 
   <script>
+    const IMAGE_URL = 'https://picsum.photos/seed/share-demo/400/300';
+
     const img = document.getElementById('preview');
     const btn = document.getElementById('shareBtn');
     const waBtn = document.getElementById('whatsappBtn');
-    const status = document.getElementById('status');
+    const waHint = document.getElementById('waHint');
+    const statusEl = document.getElementById('status');
     const spinner = document.getElementById('spinner');
-    const fallback = document.getElementById('fallback');
+    const fallbackEl = document.getElementById('fallback');
     const downloadLink = document.getElementById('downloadLink');
 
     let imageFile = null;
-    let imageBlobUrl = null;
 
-    img.addEventListener('load', async () => {
-      spinner.style.display = 'none';
-      img.style.display = 'block';
-
+    // Fetch the image as a real blob — avoids canvas CORS tainting entirely.
+    async function loadImage() {
       try {
-        // Draw to canvas to get a blob (avoids CORS issues with direct fetch)
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        canvas.getContext('2d').drawImage(img, 0, 0);
+        const resp = await fetch(IMAGE_URL);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
-        const blob = await new Promise(resolve =>
-          canvas.toBlob(resolve, 'image/jpeg', 0.92)
-        );
+        const blob = await resp.blob();
 
-        imageFile = new File([blob], 'shared-image.jpg', { type: 'image/jpeg' });
+        // Ensure we have a proper JPEG File object (not an opaque blob)
+        const jpegBlob = blob.type.startsWith('image/')
+          ? blob
+          : new Blob([blob], { type: 'image/jpeg' });
+
+        imageFile = new File([jpegBlob], 'shared-image.jpg', {
+          type: jpegBlob.type,
+          lastModified: Date.now(),
+        });
+
+        // Show preview from the object URL (no CORS needed)
+        const objectUrl = URL.createObjectURL(jpegBlob);
+        img.src = objectUrl;
+        img.onload = () => {
+          spinner.style.display = 'none';
+          img.style.display = 'block';
+        };
 
         // Set up download fallback
-        imageBlobUrl = URL.createObjectURL(blob);
-        downloadLink.href = imageBlobUrl;
+        downloadLink.href = objectUrl;
 
         btn.disabled = false;
         waBtn.disabled = false;
         setStatus('Image loaded — ready to share!', 'success');
       } catch (err) {
-        setStatus('Image loaded but canvas tainted — download only.', 'error');
-        fallback.style.display = 'flex';
+        spinner.style.display = 'none';
+        setStatus('Failed to load image: ' + err.message, 'error');
+        fallbackEl.style.display = 'flex';
       }
-    });
+    }
 
-    img.addEventListener('error', () => {
-      spinner.style.display = 'none';
-      setStatus('Failed to load image.', 'error');
-    });
+    loadImage();
 
+    // ── Generic share (native share sheet) ──
     btn.addEventListener('click', async () => {
       if (!imageFile) return;
 
-      // Check if Web Share API with files is supported
       if (navigator.canShare && navigator.canShare({ files: [imageFile] })) {
         try {
           await navigator.share({
@@ -270,7 +280,6 @@
           }
         }
       } else if (navigator.share) {
-        // Fallback: share without file (link only)
         try {
           await navigator.share({
             title: 'Check out this image!',
@@ -290,51 +299,85 @@
       }
     });
 
+    // ── WhatsApp Status share ──
+    // Strategy:
+    //   1. navigator.share({ files }) — opens the OS share sheet; user picks
+    //      WhatsApp and can select "My Status" to post the image as a Status.
+    //      This is the ONLY reliable way to share an image to WA Status from
+    //      the web — WhatsApp has no direct deep-link for Status-with-image.
+    //   2. Fallback (desktop / unsupported): open whatsapp:// deep-link which
+    //      at least launches the app, and show instructions.
     waBtn.addEventListener('click', async () => {
       if (!imageFile) return;
 
-      // Try Web Share API targeting WhatsApp with the image file
       if (navigator.canShare && navigator.canShare({ files: [imageFile] })) {
+        waHint.style.display = 'block';
         try {
           await navigator.share({
-            title: 'Share to WhatsApp Status',
-            text: 'Post this image to your WhatsApp Status!',
             files: [imageFile],
           });
-          setStatus('Opened share dialog — select WhatsApp > Status!', 'success');
+          setStatus('Image shared — check WhatsApp Status!', 'success');
+          waHint.style.display = 'none';
         } catch (err) {
+          waHint.style.display = 'none';
           if (err.name === 'AbortError') {
             setStatus('Share cancelled.', '');
           } else {
-            setStatus('Share failed — trying WhatsApp link...', 'error');
-            openWhatsAppFallback();
+            setStatus('Share sheet failed — opening WhatsApp...', 'error');
+            openWhatsAppDeepLink();
           }
         }
       } else {
-        // Fallback: open WhatsApp with a text message + page URL
-        openWhatsAppFallback();
+        // No file-share support — try deep link
+        openWhatsAppDeepLink();
       }
     });
 
-    function openWhatsAppFallback() {
+    function openWhatsAppDeepLink() {
+      // Try the whatsapp:// scheme first (works on mobile if WA is installed).
+      // Falls back to web.whatsapp.com with a text prompt.
       const text = encodeURIComponent(
-        'Check out this image! ' + window.location.href
+        'Check out this image!\n' + window.location.href
       );
-      const waUrl = 'https://api.whatsapp.com/send?text=' + text;
-      window.open(waUrl, '_blank');
-      setStatus(
-        'WhatsApp opened — to share as Status, save the image first then post from WhatsApp.',
-        'success'
-      );
+
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+      if (isMobile) {
+        // On Android, intent:// can launch WhatsApp directly
+        const isAndroid = /Android/i.test(navigator.userAgent);
+        if (isAndroid) {
+          // Android intent to send image via WhatsApp
+          // Since we can't pass blob via intent from browser, open WA with text
+          window.location.href =
+            'intent://send?text=' + text +
+            '#Intent;scheme=whatsapp;package=com.whatsapp;end';
+        } else {
+          // iOS — whatsapp:// scheme
+          window.location.href = 'whatsapp://send?text=' + text;
+        }
+        setStatus(
+          'WhatsApp opened — to post as Status: save the image above (long-press), then add it from WhatsApp Status.',
+          'success'
+        );
+      } else {
+        // Desktop fallback
+        window.open('https://web.whatsapp.com/', '_blank');
+        setStatus(
+          'WhatsApp Web opened — save the image (right-click > Save), then post as Status from your phone.',
+          'success'
+        );
+      }
+
+      showFallback();
     }
 
     function showFallback() {
-      fallback.style.display = 'flex';
+      fallbackEl.style.display = 'flex';
     }
 
     function setStatus(msg, type) {
-      status.textContent = msg;
-      status.className = 'status' + (type ? ' ' + type : '');
+      statusEl.textContent = msg;
+      statusEl.className = 'status' + (type ? ' ' + type : '');
     }
   </script>
 </body>
